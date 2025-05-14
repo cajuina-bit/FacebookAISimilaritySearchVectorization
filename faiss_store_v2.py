@@ -6,10 +6,158 @@ import faiss
 import spacy
 import re
 import math
+import unicodedata
 from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple, Set
 
 logger = logging.getLogger(__name__)
+
+def sanitize_text(text):
+    """
+    Clean text while preserving markdown code blocks and handling Unicode characters.
+    This utility function ensures text is free from problematic Unicode characters
+    that might cause encoding issues when displaying results.
+    
+    Args:
+        text: Input text that may contain Unicode characters
+        
+    Returns:
+        Sanitized text with Unicode characters converted to ASCII equivalents
+    """
+    if not text:
+        return ""
+        
+    # Handle non-string inputs
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception as e:
+            logger.error(f"Error converting to string in sanitize_text: {e}")
+            return "Text content unavailable"
+
+    # Temporarily replace code blocks with placeholders to protect them
+    code_blocks = []
+    code_pattern = r'```(?:\w*\n)?[\s\S]*?```'
+
+    def replace_code(match):
+        code_blocks.append(match.group(0))
+        return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+
+    # Replace code blocks with placeholders
+    text = re.sub(code_pattern, replace_code, text)
+
+    # List of common problematic Unicode characters to replace
+    problematic_chars = {
+        # Arrows and symbols found in FAQs and error messages
+        '\u2192': '->',       # right arrow →
+        '\u2190': '<-',       # left arrow ←
+        '\u2194': '<->',      # left-right arrow ↔
+        '\u2191': '^',        # up arrow ↑
+        '\u2193': 'v',        # down arrow ↓
+        '\u21d2': '=>',       # rightwards double arrow ⇒
+        '\u21d0': '<=',       # leftwards double arrow ⇐
+        '\u21e8': '->',       # rightwards white arrow ⇨
+        '\u2794': '->',       # heavy wide-headed rightwards arrow ➔
+        
+        # Mathematical symbols
+        '\u2261': '=',        # identical to ≡
+        '\u2248': '~=',       # almost equal to ≈
+        '\u2260': '!=',       # not equal to ≠
+        '\u2264': '<=',       # less than or equal to ≤
+        '\u2265': '>=',       # greater than or equal to ≥
+        '\u00b1': '+/-',      # plus-minus ±
+        '\u221e': 'inf',      # infinity ∞
+        '\u2211': 'sum',      # n-ary summation ∑
+        '\u220f': 'prod',     # n-ary product ∏
+        '\u222b': 'int',      # integral ∫
+        
+        # Punctuation
+        '\u2022': '*',        # bullet •
+        '\u2023': '>',        # triangular bullet ‣
+        '\u2043': '-',        # hyphen bullet ⁃
+        '\u2013': '-',        # en dash –
+        '\u2014': '--',       # em dash —
+        '\u2026': '...',      # horizontal ellipsis …
+        '\u201c': '"',        # left double quote "
+        '\u201d': '"',        # right double quote "
+        '\u2018': "'",        # left single quote '
+        '\u2019': "'",        # right single quote '
+        
+        # Symbols
+        '\u00a9': '(c)',      # copyright ©
+        '\u00ae': '(R)',      # registered trademark ®
+        '\u2122': 'TM',       # trademark ™
+        '\u25cf': '*',        # black circle ●
+        '\u2714': 'v',        # heavy check mark ✔
+        '\u2713': 'v',        # check mark ✓
+        '\u2716': 'x',        # heavy multiplication x ✖
+        '\u25a0': '[]',       # black square ■
+        '\u25a1': '[]',       # white square □
+        '\u25b2': '^',        # black up-pointing triangle ▲
+        '\u25bc': 'v',        # black down-pointing triangle ▼
+        
+        # Technical symbols
+        '\u2329': '<',        # left-pointing angle bracket ⟨
+        '\u232a': '>',        # right-pointing angle bracket ⟩
+    }
+
+    # Replace known problematic characters
+    for char, replacement in problematic_chars.items():
+        if char in text:
+            text = text.replace(char, replacement)
+
+    # For any remaining non-ASCII characters, try to normalize or replace
+    normalized = []
+    for char in text:
+        # If character is ASCII, keep it as is
+        if ord(char) < 128:
+            normalized.append(char)
+        else:
+            # Try to normalize non-ASCII characters to ASCII equivalents
+            try:
+                # NFKD normalization + ASCII encoding will handle many common cases
+                normalized_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
+                if normalized_char:
+                    normalized.append(normalized_char)
+                else:
+                    # If normalization doesn't produce an ASCII character, replace with a space
+                    normalized.append(' ')
+            except Exception as e:
+                # Log the error with more context
+                logger.warning(f"Error normalizing character '{char}' (code point {ord(char)}): {e}")
+                normalized.append(' ')
+
+    text = ''.join(normalized)
+
+    # Restore code blocks
+    for i, block in enumerate(code_blocks):
+        # Also sanitize the code blocks using the same logic
+        sanitized_block = []
+        for char in block:
+            if ord(char) < 128:
+                sanitized_block.append(char)
+            else:
+                try:
+                    norm_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
+                    if norm_char:
+                        sanitized_block.append(norm_char)
+                    else:
+                        sanitized_block.append(' ')
+                except:
+                    sanitized_block.append(' ')
+        
+        sanitized_block = ''.join(sanitized_block)
+        text = text.replace(f"__CODE_BLOCK_{i}__", sanitized_block)
+
+    # Clean up any multiple spaces that may have been created
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Final safety check - ensure the output is 100% ASCII
+    if not text.isascii():
+        logger.warning("Text still contains non-ASCII characters after sanitization, forcing ASCII encoding")
+        text = text.encode('ascii', 'ignore').decode('ascii')
+    
+    return text
 
 
 class FAISSVectorStore:
@@ -1712,102 +1860,3 @@ class FAISSVectorStore:
                 return
 
             self.create_store(name, all_chunks)
-
-    def _sanitize_text(self, text):
-        import re
-        import unicodedata
-        """Clean text while preserving markdown code blocks and handling Unicode characters"""
-        if not text:
-            return ""
-
-        # Temporarily replace code blocks with placeholders to protect them
-        code_blocks = []
-        code_pattern = r'```(?:\w*\n)?[\s\S]*?```'
-
-        def replace_code(match):
-            code_blocks.append(match.group(0))
-            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
-
-        # Replace code blocks with placeholders
-        text = re.sub(code_pattern, replace_code, text)
-
-        # List of common problematic Unicode characters to replace
-        problematic_chars = {
-            '\u2192': '->',  # right arrow →
-            '\u2190': '<-',  # left arrow ←
-            '\u2194': '<->',  # left-right arrow ↔
-            '\u2261': '=',   # identical to ≡
-            '\u2022': '*',   # bullet •
-            '\u2013': '-',   # en dash –
-            '\u2014': '--',  # em dash —
-            '\u201c': '"',   # left double quote "
-            '\u201d': '"',   # right double quote "
-            '\u2018': "'",   # left single quote '
-            '\u2019': "'",   # right single quote '
-            '\u00a9': '(c)', # copyright ©
-            '\u00ae': '(R)', # registered trademark ®
-            '\u2122': 'TM',  # trademark ™
-            '\u00b1': '+/-', # plus-minus ±
-            '\u2248': '~=',  # almost equal to ≈
-            '\u2260': '!=',  # not equal to ≠
-            '\u2264': '<=',  # less than or equal to ≤
-            '\u2265': '>=',  # greater than or equal to ≥
-            '\u221e': 'inf', # infinity ∞
-            '\u25cf': '*',   # black circle ●
-            '\u2714': 'v',   # heavy check mark ✔
-            '\u2716': 'x',   # heavy multiplication x ✖
-            '\u25a0': '[]',  # black square ■
-            '\u25a1': '[]',  # white square □
-        }
-
-        # Replace known problematic characters
-        for char, replacement in problematic_chars.items():
-            if char in text:
-                text = text.replace(char, replacement)
-
-        # For any remaining non-ASCII characters, try to normalize or replace
-        normalized = []
-        for char in text:
-            # If character is ASCII, keep it as is
-            if ord(char) < 128:
-                normalized.append(char)
-            else:
-                # Try to normalize non-ASCII characters to ASCII equivalents
-                try:
-                    # NFKD normalization + ASCII encoding will handle many common cases
-                    normalized_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
-                    if normalized_char:
-                        normalized.append(normalized_char)
-                    else:
-                        # If normalization doesn't produce an ASCII character, replace with a space
-                        normalized.append(' ')
-                except:
-                    # If any errors occur, just replace with a space
-                    normalized.append(' ')
-
-        text = ''.join(normalized)
-
-        # Restore code blocks
-        for i, block in enumerate(code_blocks):
-            # Also sanitize the code blocks using the same logic
-            sanitized_block = []
-            for char in block:
-                if ord(char) < 128:
-                    sanitized_block.append(char)
-                else:
-                    try:
-                        norm_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
-                        if norm_char:
-                            sanitized_block.append(norm_char)
-                        else:
-                            sanitized_block.append(' ')
-                    except:
-                        sanitized_block.append(' ')
-            
-            sanitized_block = ''.join(sanitized_block)
-            text = text.replace(f"__CODE_BLOCK_{i}__", sanitized_block)
-
-        # Clean up any multiple spaces that may have been created
-        text = re.sub(r'\s+', ' ', text)
-        
-        return text
