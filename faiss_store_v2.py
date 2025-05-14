@@ -637,3 +637,48 @@ class FAISSVectorStore:
             top = results[0]
             logger.info(f"Top result: '{top.get('title', 'No title')}' (score={top['score']:.3f})")
         return results[:top_k]
+
+def create_store_from_confluence(self, name: str, connector, url: str) -> None:
+    """
+    Create a vector store from a single Confluence page.
+
+    Args:
+        name: Name of the vector store
+        connector: Confluence connector instance
+        url: URL of the Confluence page
+    """
+    page_content = connector.get_content_by_url(url)
+    if 'error' in page_content:
+        logger.error(f"Error fetching content from {url}: {page_content['error']}")
+        return
+
+    content_chunks = page_content.get('content', [])
+    self.create_store(name, content_chunks)
+
+def create_multi_store_from_confluence(self, stores_dict: Dict[str, List[str]], connector) -> None:
+    """
+    Create vector stores from multiple Confluence pages.
+
+    Args:
+        stores_dict: Dictionary mapping store names to lists of URLs
+        connector: Confluence connector instance
+    """
+    for name, urls in stores_dict.items():
+        logger.info(f"Creating multi-store {name} from {len(urls)} Confluence pages")
+        all_chunks = []
+
+        for url in urls:
+            page_content = connector.get_content_by_url(url)
+            if 'error' in page_content:
+                logger.error(f"Error fetching content from {url}: {page_content['error']}")
+                continue
+
+            content_chunks = page_content.get('content', [])
+            logger.info(f"Fetched {len(content_chunks)} chunks from {url}")
+            all_chunks.extend(content_chunks)
+
+        if not all_chunks:
+            logger.warning(f"No content chunks found for store {name}")
+            return
+
+        self.create_store(name, all_chunks)
