@@ -394,6 +394,21 @@ class FAISSVectorStore:
         if not texts:
             logger.warning(f"No texts provided for store {name}")
             return
+            
+        # Sanitize all text fields in the input data before processing
+        sanitized_texts = []
+        for item in texts:
+            sanitized_item = item.copy()
+            # Sanitize content field
+            if 'content' in sanitized_item and sanitized_item['content']:
+                sanitized_item['content'] = sanitize_text(sanitized_item['content'])
+            # Sanitize title field
+            if 'title' in sanitized_item and sanitized_item['title']:
+                sanitized_item['title'] = sanitize_text(sanitized_item['title'])
+            sanitized_texts.append(sanitized_item)
+        
+        # Use sanitized texts for all further processing
+        texts = sanitized_texts
 
         vectors = []
         metadata = []
@@ -1543,8 +1558,25 @@ class FAISSVectorStore:
             if filtered_results and any(r.get('needs_clarification', False) for r in filtered_results[:1]):
                 return_count = min(3, len(filtered_results))
                 logger.info(f"Returning {return_count} results for clarification")
+                
+                # Ensure all text fields in results are sanitized
+                for result in filtered_results[:return_count]:
+                    # Sanitize title and content fields
+                    if 'title' in result and result['title']:
+                        result['title'] = sanitize_text(result['title'])
+                    if 'content' in result and result['content']:
+                        result['content'] = sanitize_text(result['content'])
+                
                 return filtered_results[:return_count]
             else:
+                # Ensure all text fields in results are sanitized
+                for result in filtered_results[:top_k]:
+                    # Sanitize title and content fields
+                    if 'title' in result and result['title']:
+                        result['title'] = sanitize_text(result['title'])
+                    if 'content' in result and result['content']:
+                        result['content'] = sanitize_text(result['content'])
+                
                 return filtered_results[:top_k]
                 
         finally:
@@ -1776,8 +1808,25 @@ class FAISSVectorStore:
         if filtered_results and any(r.get('needs_clarification', False) for r in filtered_results[:1]):
             return_count = min(3, len(filtered_results))
             logger.info(f"Returning {return_count} results for clarification")
+            
+            # Ensure all text fields in results are sanitized
+            for result in filtered_results[:return_count]:
+                # Sanitize title and content fields
+                if 'title' in result and result['title']:
+                    result['title'] = sanitize_text(result['title'])
+                if 'content' in result and result['content']:
+                    result['content'] = sanitize_text(result['content'])
+            
             return filtered_results[:return_count]
         else:
+            # Ensure all text fields in results are sanitized
+            for result in filtered_results[:top_k]:
+                # Sanitize title and content fields
+                if 'title' in result and result['title']:
+                    result['title'] = sanitize_text(result['title'])
+                if 'content' in result and result['content']:
+                    result['content'] = sanitize_text(result['content'])
+            
             return filtered_results[:top_k]
 
     def list_stores(self) -> List[str]:
