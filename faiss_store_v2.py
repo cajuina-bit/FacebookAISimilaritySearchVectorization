@@ -1712,3 +1712,102 @@ class FAISSVectorStore:
                 return
 
             self.create_store(name, all_chunks)
+
+    def _sanitize_text(self, text):
+        import re
+        import unicodedata
+        """Clean text while preserving markdown code blocks and handling Unicode characters"""
+        if not text:
+            return ""
+
+        # Temporarily replace code blocks with placeholders to protect them
+        code_blocks = []
+        code_pattern = r'```(?:\w*\n)?[\s\S]*?```'
+
+        def replace_code(match):
+            code_blocks.append(match.group(0))
+            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+
+        # Replace code blocks with placeholders
+        text = re.sub(code_pattern, replace_code, text)
+
+        # List of common problematic Unicode characters to replace
+        problematic_chars = {
+            '\u2192': '->',  # right arrow →
+            '\u2190': '<-',  # left arrow ←
+            '\u2194': '<->',  # left-right arrow ↔
+            '\u2261': '=',   # identical to ≡
+            '\u2022': '*',   # bullet •
+            '\u2013': '-',   # en dash –
+            '\u2014': '--',  # em dash —
+            '\u201c': '"',   # left double quote "
+            '\u201d': '"',   # right double quote "
+            '\u2018': "'",   # left single quote '
+            '\u2019': "'",   # right single quote '
+            '\u00a9': '(c)', # copyright ©
+            '\u00ae': '(R)', # registered trademark ®
+            '\u2122': 'TM',  # trademark ™
+            '\u00b1': '+/-', # plus-minus ±
+            '\u2248': '~=',  # almost equal to ≈
+            '\u2260': '!=',  # not equal to ≠
+            '\u2264': '<=',  # less than or equal to ≤
+            '\u2265': '>=',  # greater than or equal to ≥
+            '\u221e': 'inf', # infinity ∞
+            '\u25cf': '*',   # black circle ●
+            '\u2714': 'v',   # heavy check mark ✔
+            '\u2716': 'x',   # heavy multiplication x ✖
+            '\u25a0': '[]',  # black square ■
+            '\u25a1': '[]',  # white square □
+        }
+
+        # Replace known problematic characters
+        for char, replacement in problematic_chars.items():
+            if char in text:
+                text = text.replace(char, replacement)
+
+        # For any remaining non-ASCII characters, try to normalize or replace
+        normalized = []
+        for char in text:
+            # If character is ASCII, keep it as is
+            if ord(char) < 128:
+                normalized.append(char)
+            else:
+                # Try to normalize non-ASCII characters to ASCII equivalents
+                try:
+                    # NFKD normalization + ASCII encoding will handle many common cases
+                    normalized_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
+                    if normalized_char:
+                        normalized.append(normalized_char)
+                    else:
+                        # If normalization doesn't produce an ASCII character, replace with a space
+                        normalized.append(' ')
+                except:
+                    # If any errors occur, just replace with a space
+                    normalized.append(' ')
+
+        text = ''.join(normalized)
+
+        # Restore code blocks
+        for i, block in enumerate(code_blocks):
+            # Also sanitize the code blocks using the same logic
+            sanitized_block = []
+            for char in block:
+                if ord(char) < 128:
+                    sanitized_block.append(char)
+                else:
+                    try:
+                        norm_char = unicodedata.normalize('NFKD', char).encode('ascii', 'ignore').decode('ascii')
+                        if norm_char:
+                            sanitized_block.append(norm_char)
+                        else:
+                            sanitized_block.append(' ')
+                    except:
+                        sanitized_block.append(' ')
+            
+            sanitized_block = ''.join(sanitized_block)
+            text = text.replace(f"__CODE_BLOCK_{i}__", sanitized_block)
+
+        # Clean up any multiple spaces that may have been created
+        text = re.sub(r'\s+', ' ', text)
+        
+        return text
